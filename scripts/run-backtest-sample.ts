@@ -1,13 +1,18 @@
 import { analyzeStock } from "@/lib/analysis/engine";
 import { getRealHistory } from "@/lib/data/historical-provider";
 
-const symbols = ["NABIL", "ADBL", "NICA", "NTC", "SHIVM"];
+const symbols = ["NABIL", "ADBL", "NICA", "NTC", "SHIVM", "UPPER", "HDL", "LICN", "CHCL", "NIFRA"];
 const sectors: Record<string, string> = {
   NABIL: "Banking",
   ADBL: "Banking",
   NICA: "Banking",
   NTC: "Telecommunications",
-  SHIVM: "Manufacturing"
+  SHIVM: "Manufacturing",
+  UPPER: "Hydropower",
+  HDL: "Manufacturing",
+  LICN: "Insurance",
+  CHCL: "Hydropower",
+  NIFRA: "Investment"
 };
 
 async function main() {

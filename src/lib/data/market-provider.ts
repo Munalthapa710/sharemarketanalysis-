@@ -192,7 +192,7 @@ export class MarketDataProvider {
       effectiveStock = stock;
     }
 
-    const analysis = analyzeStock(effectiveStock);
+    const analysis = analyzeStock(effectiveStock, { mode: "full" });
     const liveChart = await marketDataBot.getLiveChart(effectiveStock.symbol);
     const liveQuoteSeries = await marketDataBot.getQuoteSeries(effectiveStock.symbol);
 
@@ -236,7 +236,7 @@ export class MarketDataProvider {
         (b.currentPrice - b.previousClose) / b.previousClose -
         (a.currentPrice - a.previousClose) / a.previousClose
     );
-    const analyses = liveStocks.map((stock) => analyzeStock(stock));
+    const analyses = liveStocks.map((stock) => analyzeStock(stock, { mode: "light" }));
     const recommendationDistribution = analyses.reduce<MarketSummary["recommendationDistribution"]>(
       (accumulator, analysis) => {
         accumulator[analysis.recommendation] += 1;
