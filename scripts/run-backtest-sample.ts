@@ -2,6 +2,13 @@ import { analyzeStock } from "@/lib/analysis/engine";
 import { getRealHistory } from "@/lib/data/historical-provider";
 
 const symbols = ["NABIL", "ADBL", "NICA", "NTC", "SHIVM"];
+const sectors: Record<string, string> = {
+  NABIL: "Banking",
+  ADBL: "Banking",
+  NICA: "Banking",
+  NTC: "Telecommunications",
+  SHIVM: "Manufacturing"
+};
 
 async function main() {
   const rows = [];
@@ -23,7 +30,7 @@ async function main() {
     const analysis = analyzeStock({
       symbol,
       companyName: symbol,
-      sector: "NEPSE",
+      sector: sectors[symbol] ?? "Other",
       currentPrice: history.at(-1)?.close ?? 0,
       previousClose: history.at(-2)?.close ?? history.at(-1)?.close ?? 0,
       volume: history.at(-1)?.volume ?? 0,

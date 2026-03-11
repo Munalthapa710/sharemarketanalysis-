@@ -30,6 +30,8 @@ type SectorProfile = {
   volatilityTolerance: number;
 };
 
+type MarketRegime = "bullish" | "bearish" | "sideways" | "volatile";
+
 const SECTOR_PROFILES: Record<string, SectorProfile> = {
   Banking: {
     trendWeight: 1.06,
@@ -160,6 +162,32 @@ function predictionCurve(lastPrice: number, targetPrice: number, days: number) {
   }
 
   return points;
+}
+
+function detectMarketRegime(args: {
+  currentPrice: number;
+  sma20: number;
+  sma50: number;
+  trendSlope: number;
+  recentSlope: number;
+  rsi14: number;
+  volatilityValue: number;
+}) {
+  const volatilityRatio = args.currentPrice > 0 ? args.volatilityValue / args.currentPrice : 0;
+
+  if (volatilityRatio > 0.05) {
+    return "volatile" as const;
+  }
+
+  if (args.sma20 > args.sma50 && args.trendSlope > 0 && args.recentSlope > 0 && args.rsi14 >= 48) {
+    return "bullish" as const;
+  }
+
+  if (args.sma20 < args.sma50 && args.trendSlope < 0 && args.recentSlope < 0 && args.rsi14 <= 52) {
+    return "bearish" as const;
+  }
+
+  return "sideways" as const;
 }
 
 function emptyBacktest(): BacktestMetrics {
@@ -331,6 +359,19 @@ function deriveConfidence(
   );
 }
 
+function regimeTargetMultiplier(regime: MarketRegime) {
+  switch (regime) {
+    case "bullish":
+      return 1.08;
+    case "bearish":
+      return 1.05;
+    case "volatile":
+      return 0.82;
+    case "sideways":
+      return 0.88;
+  }
+}
+
 function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): AnalysisResult {
   const sectorProfile = getSectorProfile(stock.sector);
   const stableHistory = buildStableHistory(stock);
@@ -351,9 +392,19 @@ function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): Anal
   const momentumValue = momentum(closes, 10);
   const volatilityValue = volatility(closes, 20);
   const trendSlope = linearRegressionSlope(closes.slice(-20));
+  const recentSlope = linearRegressionSlope(closes.slice(-5));
   const volumeTrendValue = volumeTrend(volumes);
   const safeSupport = finiteOr(levels.support, Math.min(currentPrice, previousClose));
   const safeResistance = finiteOr(levels.resistance, Math.max(currentPrice, previousClose));
+  const regime = detectMarketRegime({
+    currentPrice,
+    sma20,
+    sma50,
+    trendSlope,
+    recentSlope,
+    rsi14,
+    volatilityValue
+  });
 
   let score = 50;
   score += currentPrice > sma20 ? 8 : -8;
@@ -370,6 +421,11 @@ function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): Anal
   score += currentPrice >= safeResistance * 0.98 ? -5 : 0;
   score += trendSlope * 6 * (sectorProfile.trendWeight - 1);
   score -= Math.max(volatilityValue - 12 * sectorProfile.volatilityTolerance, 0) * 0.35;
+  score += regime === "bullish" ? 8 : 0;
+  score += regime === "bearish" ? -8 : 0;
+  score += regime === "sideways" ? (Math.abs(trendSlope) < 0.6 ? -4 : 0) : 0;
+  score += regime === "volatile" ? -6 : 0;
+  score += recentSlope > 0 ? 4 : -4;
 
   const baseRecommendation = buildRecommendation(clamp(score, 0, 100), sectorProfile.thresholdShift);
   const slopeProjection = currentPrice + trendSlope * 8 * sectorProfile.trendWeight;
@@ -394,12 +450,10 @@ function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): Anal
       : baseRecommendation === "Strong Sell" || baseRecommendation === "Sell"
         ? boundedBearishTarget
         : currentPrice + trendSlope * 5;
-  const predictedPrice = roundFinite(
+  const rawPredictedPrice = roundFinite(
     horizonProjection * 0.42 + directionalTarget * 0.33 + meanReversionProjection * 0.15 + macdProjection * 0.1,
     currentPrice
   );
-  const rupeeMove = roundFinite(predictedPrice - currentPrice, 0);
-  const percentageMove = roundFinite(currentPrice === 0 ? 0 : (rupeeMove / currentPrice) * 100, 0);
   const structuralConfidence = clamp(
     roundFinite(
       58 +
@@ -414,6 +468,17 @@ function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): Anal
     90
   );
   const backtest = includeBacktest ? evaluateBacktest(stock) : emptyBacktest();
+  const biasAdjustment =
+    currentPrice > 0
+      ? clamp((-backtest.biasPercent / 100) * currentPrice, -currentPrice * 0.08, currentPrice * 0.08)
+      : 0;
+  const regimeAdjustedTarget = currentPrice + (rawPredictedPrice - currentPrice) * regimeTargetMultiplier(regime);
+  const predictedPrice = roundFinite(
+    regimeAdjustedTarget + biasAdjustment * (includeBacktest ? 0.55 : 0),
+    currentPrice
+  );
+  const rupeeMove = roundFinite(predictedPrice - currentPrice, 0);
+  const percentageMove = roundFinite(currentPrice === 0 ? 0 : (rupeeMove / currentPrice) * 100, 0);
   const calibratedScore = clamp(
     score +
       (backtest.directionalAccuracy - 50) * 0.18 -
@@ -444,7 +509,7 @@ function analyzeStockInternal(stock: StockQuote, includeBacktest: boolean): Anal
   const simpleExplanation = `${stock.symbol} looks ${recommendation.toLowerCase()} because price is ${currentPrice > sma20 ? "above" : "below"} key moving averages, RSI is ${rsi14.toFixed(0)}, and momentum is ${momentumValue >= 0 ? "improving" : "weakening"}.`;
   const advancedExplanation = [
     `The weighted model scores trend, momentum, mean reversion, and participation, then calibrates the output using sector regime rules.`,
-    `Price vs SMA20/SMA50 is ${currentPrice > sma20 && currentPrice > sma50 ? "constructive" : "mixed"}, MACD histogram is ${macdSet.histogram >= 0 ? "positive" : "negative"}, and volume trend is ${(volumeTrendValue * 100).toFixed(1)}%.`,
+    `Price vs SMA20/SMA50 is ${currentPrice > sma20 && currentPrice > sma50 ? "constructive" : "mixed"}, MACD histogram is ${macdSet.histogram >= 0 ? "positive" : "negative"}, volume trend is ${(volumeTrendValue * 100).toFixed(1)}%, and the current regime is ${regime}.`,
     `Confidence is calibrated by multi-horizon rolling backtests, with ${backtest.sampleSize} total windows and a best-fit horizon of ${backtest.horizonDays} trading days. Directional accuracy is ${backtest.directionalAccuracy.toFixed(0)}% and mean absolute error is ${backtest.meanAbsoluteErrorPercent.toFixed(2)}%.`
   ].join(" ");
 
