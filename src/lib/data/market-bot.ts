@@ -1,0 +1,259 @@
+import { chukulScraper, liveNepseScraper, shareSansarScraper } from "@/lib/data/live-scrapers";
+import { db } from "@/lib/db";
+import { MOCK_STOCKS } from "@/lib/data/mock-market";
+import { buildIntradayBuckets, getFiveMinuteBucket, getTradingDay, isWithinLiveTradingWindow } from "@/lib/data/time";
+import type { LiveChartPoint, LiveQuote, StockQuote } from "@/types";
+
+type CacheState = {
+  fetchedAt: number;
+  quotes: Map<string, LiveQuote>;
+  quoteSeries: Map<string, LiveQuote[]>;
+  sources: string[];
+  errors: string[];
+};
+
+const cache: CacheState = {
+  fetchedAt: 0,
+  quotes: new Map(),
+  quoteSeries: new Map(),
+  sources: [],
+  errors: []
+};
+
+const TTL_MS = 1000 * 60 * 2;
+const BASELINE_MAP = new Map(MOCK_STOCKS.map((stock) => [stock.symbol, stock.currentPrice]));
+
+function isReasonableQuote(symbol: string, quote: LiveQuote) {
+  if (quote.currentPrice <= 0 || quote.previousClose <= 0) {
+    return false;
+  }
+
+  const baseline = BASELINE_MAP.get(symbol);
+  if (!baseline) {
+    return Math.abs(quote.currentPrice - quote.previousClose) / quote.previousClose <= 0.2;
+  }
+
+  const ratio = quote.currentPrice / baseline;
+  const previousCloseRatio = quote.previousClose / baseline;
+  const changeRatio = Math.abs(quote.currentPrice - quote.previousClose) / quote.previousClose;
+
+  if (quote.rawChangePercent !== undefined && Math.abs(quote.rawChangePercent) > 20) {
+    return false;
+  }
+
+  return (
+    ratio >= 0.55 &&
+    ratio <= 1.8 &&
+    previousCloseRatio >= 0.55 &&
+    previousCloseRatio <= 1.8 &&
+    changeRatio <= 0.2
+  );
+}
+
+function scoreQuote(quote: LiveQuote, median: number) {
+  const distance = Math.abs(quote.currentPrice - median);
+  const volumeBonus = quote.volume > 0 ? 0.5 : 0;
+  const sourceBonus =
+    quote.source === "livenepse" ? 0.5 : quote.source === "sharesansar" ? 0.25 : 0.1;
+  const stabilityPenalty =
+    Math.abs(quote.currentPrice - quote.previousClose) / Math.max(quote.previousClose, 1) > 0.1 ? 0.75 : 0;
+
+  return distance - volumeBonus - sourceBonus + stabilityPenalty;
+}
+
+function chooseBestQuote(quotes: LiveQuote[]) {
+  const orderedPrices = quotes.map((quote) => quote.currentPrice).sort((a, b) => a - b);
+  const median = orderedPrices[Math.floor(orderedPrices.length / 2)];
+
+  return [...quotes].sort((left, right) => scoreQuote(left, median) - scoreQuote(right, median))[0];
+}
+
+function buildLiveChart(quotes: LiveQuote[]): LiveChartPoint[] {
+  return [...quotes]
+    .sort((left, right) => left.asOf.localeCompare(right.asOf) || left.source.localeCompare(right.source))
+    .map((quote, index) => ({
+      date: `${quote.source.toUpperCase()} ${index + 1}`,
+      price: Number(quote.currentPrice.toFixed(2)),
+      source: quote.source
+    }));
+}
+
+function mergeQuotes(target: Map<string, LiveQuote[]>, incoming: Map<string, LiveQuote>) {
+  for (const [symbol, quote] of incoming.entries()) {
+    if (!isReasonableQuote(symbol, quote)) {
+      continue;
+    }
+
+    const existing = target.get(symbol) ?? [];
+    existing.push(quote);
+    target.set(symbol, existing);
+  }
+}
+
+export class MarketDataBot {
+  private scrapers = [liveNepseScraper, shareSansarScraper, chukulScraper];
+
+  async scrapeAll(force = false) {
+    const now = Date.now();
+    if (!force && cache.quotes.size && now - cache.fetchedAt < TTL_MS) {
+      return cache;
+    }
+
+    const merged = new Map<string, LiveQuote>();
+    const quoteSeries = new Map<string, LiveQuote[]>();
+    const sources: string[] = [];
+    const errors: string[] = [];
+
+    const results = await Promise.allSettled(
+      this.scrapers.map(async (scraper) => {
+        const quotes = await scraper.scrape();
+        return {
+          name: scraper.name,
+          quotes
+        };
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        sources.push(result.value.name);
+        mergeQuotes(quoteSeries, result.value.quotes);
+      } else {
+        errors.push(result.reason instanceof Error ? result.reason.message : "Unknown scraper error");
+      }
+    }
+
+    for (const [symbol, quotes] of quoteSeries.entries()) {
+      merged.set(symbol, chooseBestQuote(quotes));
+    }
+
+    cache.fetchedAt = now;
+    cache.quotes = merged;
+    cache.quoteSeries = quoteSeries;
+    cache.sources = sources;
+    cache.errors = errors;
+
+    return cache;
+  }
+
+  async getQuote(symbol: string) {
+    const state = await this.scrapeAll();
+    return state.quotes.get(symbol.toUpperCase()) ?? null;
+  }
+
+  async getQuoteSeries(symbol: string) {
+    const state = await this.scrapeAll();
+    return state.quoteSeries.get(symbol.toUpperCase()) ?? [];
+  }
+
+  async getLiveChart(symbol: string) {
+    const tradingDay = getTradingDay();
+    const stored = await db.livePriceSnapshot.findMany({
+      where: {
+        symbol: symbol.toUpperCase(),
+        tradingDay
+      },
+      orderBy: {
+        capturedAt: "asc"
+      }
+    });
+
+    if (stored.length) {
+      const latestByBucket = new Map<string, (typeof stored)[number]>();
+      for (const snapshot of stored) {
+        latestByBucket.set(snapshot.bucketLabel, snapshot);
+      }
+
+      return buildIntradayBuckets()
+        .map((bucket) => latestByBucket.get(bucket))
+        .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot))
+        .map((snapshot) => ({
+          date: snapshot.bucketLabel,
+          price: Number(snapshot.price.toFixed(2)),
+          source: snapshot.source
+        }));
+    }
+
+    const series = await this.getQuoteSeries(symbol);
+    return buildLiveChart(series);
+  }
+
+  async persistCurrentSnapshots() {
+    if (!isWithinLiveTradingWindow()) {
+      return { saved: 0, tradingDay: getTradingDay(), bucketLabel: getFiveMinuteBucket() };
+    }
+
+    const state = await this.scrapeAll(true);
+    const tradingDay = getTradingDay();
+    const bucketLabel = getFiveMinuteBucket();
+    let saved = 0;
+
+    for (const [symbol, quotes] of state.quoteSeries.entries()) {
+      const best = chooseBestQuote(quotes);
+      await db.livePriceSnapshot.upsert({
+        where: {
+          symbol_tradingDay_bucketLabel_source: {
+            symbol,
+            tradingDay,
+            bucketLabel,
+            source: best.source
+          }
+        },
+        update: {
+          price: best.currentPrice,
+          previousClose: best.previousClose,
+          volume: best.volume,
+          capturedAt: new Date()
+        },
+        create: {
+          symbol,
+          tradingDay,
+          bucketLabel,
+          source: best.source,
+          price: best.currentPrice,
+          previousClose: best.previousClose,
+          volume: best.volume,
+          capturedAt: new Date()
+        }
+      });
+      saved += 1;
+    }
+
+    return { saved, tradingDay, bucketLabel };
+  }
+
+  async enrichStocks(stocks: StockQuote[]) {
+    let state: CacheState;
+    try {
+      state = await this.scrapeAll();
+    } catch {
+      return stocks;
+    }
+    return stocks.map((stock) => {
+      const live = state.quotes.get(stock.symbol);
+      if (!live) {
+        return stock;
+      }
+
+      return {
+        ...stock,
+        currentPrice: live.currentPrice || stock.currentPrice,
+        previousClose: live.previousClose || stock.previousClose,
+        volume: live.volume || stock.volume
+      };
+    });
+  }
+
+  async snapshot(force = false) {
+    const state = await this.scrapeAll(force);
+    return {
+      fetchedAt: new Date(state.fetchedAt).toISOString(),
+      quoteCount: state.quotes.size,
+      sources: state.sources,
+      errors: state.errors,
+      quotes: Array.from(state.quotes.values()).slice(0, 50)
+    };
+  }
+}
+
+export const marketDataBot = new MarketDataBot();

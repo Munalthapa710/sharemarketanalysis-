@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(13, 143, 111, 0.12), transparent 32%),
+    linear-gradient(180deg, #f9fcfa 0%, #eef5f2 100%);
+  color: #0d1f1d;
+}
+
+* {
+  border-color: rgba(84, 114, 109, 0.18);
+}
+
+.grid-cards {
+  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-4;
+}

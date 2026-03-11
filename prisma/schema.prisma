@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String            @id @default(cuid())
+  name           String
+  email          String            @unique
+  passwordHash   String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  watchlistItems WatchlistItem[]
+  analyses       AnalysisHistory[]
+}
+
+model WatchlistItem {
+  id          String   @id @default(cuid())
+  symbol      String
+  companyName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+}
+
+model AnalysisHistory {
+  id                   String   @id @default(cuid())
+  symbol               String
+  companyName          String
+  recommendation       String
+  currentPrice         Float
+  predictedPrice       Float
+  expectedChange       Float
+  rupeeMove            Float
+  confidence           Float
+  timeframeLabel       String
+  estimatedTargetDate  DateTime?
+  riskNote             String
+  simpleExplanation    String
+  advancedExplanation  String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LivePriceSnapshot {
+  id          String   @id @default(cuid())
+  symbol      String
+  price       Float
+  previousClose Float
+  volume      Float
+  source      String
+  capturedAt  DateTime @default(now())
+  tradingDay  String
+  bucketLabel String
+
+  @@index([symbol, capturedAt])
+  @@unique([symbol, tradingDay, bucketLabel, source])
+}
