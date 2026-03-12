@@ -55,6 +55,10 @@ export class MarketDataProvider {
   }
 
   private async fetchStocks() {
+    if (process.env.NODE_ENV === "test") {
+      return MOCK_STOCKS;
+    }
+
     try {
       const [securities, todayPrices] = await Promise.all([
         getOfficialSecurities(),

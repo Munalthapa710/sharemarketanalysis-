@@ -3,6 +3,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const OFFICIAL_PROVIDER_TIMEOUT_MS =
+  process.env.NODE_ENV === "test" ? 250 : 3000;
 
 type CacheEntry<T> = {
   fetchedAt: number;
@@ -39,7 +41,8 @@ async function runPython<T>(args: string[]) {
   const scriptPath = path.join(process.cwd(), "scripts", "nepse_market.py");
   const task = execFileAsync("python", [scriptPath, ...args], {
     windowsHide: true,
-    maxBuffer: 1024 * 1024 * 8
+    maxBuffer: 1024 * 1024 * 8,
+    timeout: OFFICIAL_PROVIDER_TIMEOUT_MS
   }).then(({ stdout }) => {
     const parsed = JSON.parse(stdout) as T;
     cache.set(key, {
