@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Clock3, LayoutDashboard, LineChart, Settings, Star, Waves } from "lucide-react";
+import { BarChart3, Bell, Clock3, LayoutDashboard, LineChart, Settings, Star, Waves } from "lucide-react";
 import { BullLogo } from "@/components/branding/bull-logo";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/analysis", label: "Analysis", icon: LineChart },
   { href: "/watchlist", label: "Watchlist", icon: Star },
+  { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/history", label: "Prediction History", icon: Clock3 },
   { href: "/market", label: "Market Overview", icon: BarChart3 },
   { href: "/profile", label: "Profile", icon: Settings }

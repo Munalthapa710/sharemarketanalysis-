@@ -109,3 +109,15 @@ export type MarketSummary = {
     unchanged: number;
   };
 };
+
+export type AppNotification = {
+  id: string;
+  title: string;
+  message: string;
+  actionLabel: string;
+  href: string;
+  severity: "positive" | "neutral" | "negative";
+  category: "market" | "watchlist" | "signal";
+  symbol?: string;
+  createdAt: string;
+};

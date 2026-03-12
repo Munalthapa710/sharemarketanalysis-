@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const protectedPrefixes = ["/dashboard", "/analysis", "/watchlist", "/history", "/stocks", "/profile", "/market"];
+const protectedPrefixes = ["/dashboard", "/analysis", "/watchlist", "/history", "/stocks", "/profile", "/market", "/notifications"];
 
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("shareanalysis_session")?.value;
@@ -21,5 +21,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/analysis/:path*", "/watchlist/:path*", "/history/:path*", "/stocks/:path*", "/profile/:path*", "/market/:path*", "/login", "/register"]
+  matcher: ["/dashboard/:path*", "/analysis/:path*", "/watchlist/:path*", "/history/:path*", "/stocks/:path*", "/profile/:path*", "/market/:path*", "/notifications/:path*", "/login", "/register"]
 };

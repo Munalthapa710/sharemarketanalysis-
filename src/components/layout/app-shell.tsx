@@ -6,9 +6,11 @@ import { Topbar } from "@/components/layout/topbar";
 
 export function AppShell({
   name,
+  notificationCount,
   children
 }: {
   name: string;
+  notificationCount: number;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -24,7 +26,11 @@ export function AppShell({
         </div>
 
         <main className="space-y-4 md:space-y-6">
-          <Topbar name={name} onMenuClick={() => setOpen((value) => !value)} />
+          <Topbar
+            name={name}
+            notificationCount={notificationCount}
+            onMenuClick={() => setOpen((value) => !value)}
+          />
           {children}
         </main>
       </div>
